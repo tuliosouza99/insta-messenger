@@ -1,0 +1,17 @@
+node_modules/
+build/
+dist/
+.superpowers/
+test-results/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+coverage/
+docs/superpowers/
+docs/verification.md
+*.pem
+*.key
+*.p12
+*.mobileprovision
