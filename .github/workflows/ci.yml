@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   javascript:
-    name: JavaScript and bundled resources
+    name: JavaScript checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -23,4 +23,3 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm run check
-      - run: node scripts/build-ios.js --check

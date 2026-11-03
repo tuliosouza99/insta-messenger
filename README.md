@@ -4,13 +4,29 @@ An unofficial macOS app for Instagram messages, with less browsing around them. 
 
 Independent project. Not affiliated with or endorsed by Instagram or Meta.
 
-## Download
+## Build from source
 
-[Experimental macOS Apple Silicon release](https://github.com/tuliosouza99/insta-messenger/releases/tag/v0.2.1)
+Requires macOS, Git, Node.js 24+ and npm. Apple Silicon is the tested platform; Intel Mac, Windows and Linux builds have not been verified.
 
-The prebuilt app targets Apple Silicon Macs. It is **ad-hoc signed, not Developer ID signed or notarized**; macOS may block a downloaded copy. Building from source is an alternative. Windows, Linux and Intel Mac builds have not been verified.
+```sh
+git clone https://github.com/tuliosouza99/insta-messenger.git
+cd insta-messenger
+npm ci
+npm run package
+open "dist/Instagram Messenger-darwin-$(node -p process.arch)/Instagram Messenger.app"
+```
 
-The release archive includes the app and its project/Electron/Chromium license notices. Extract it and open **Instagram Messenger.app**. Sign in with your Instagram username and password; Facebook-linked sign-in is not supported in this version.
+Packaging targets the current machine's OS and architecture; the command above opens the app for the current Mac architecture. It creates and verifies a local ad-hoc signature. To run the development window instead, use `npm start`; native notification delivery should be checked in the packaged app.
+
+Sign in directly with your Instagram username and password. Facebook-linked sign-in is not supported in this version.
+
+```sh
+npm run check          # Preload build and JavaScript unit/DOM checks
+npm run test:desktop   # Actual Electron integration tests on macOS
+npm run check:all      # Unit and macOS integration checks
+```
+
+See [testing and local packaging checks](docs/testing.md). GitHub CI runs the JavaScript checks; macOS integration and native notification delivery have separate local checks.
 
 ## Features
 
@@ -46,29 +62,6 @@ Calls, camera/microphone access, account switching, tray behavior, dock unread b
 
 This wrapper uses Instagram's website. It does not use an unofficial messaging API or a business-account API, and it cannot guarantee account-specific login, messaging, media or story availability.
 
-## Build from source
-
-Requires macOS, Node.js 24+ and npm.
-
-```sh
-git clone https://github.com/tuliosouza99/insta-messenger.git
-cd insta-messenger
-npm ci
-npm run package
-open "dist/Instagram Messenger-darwin-arm64/Instagram Messenger.app"
-```
-
-Packaging targets the current machine's OS and architecture; the command above shows the Apple Silicon output. It creates and verifies a local ad-hoc signature. To run the development window instead, use `npm start`; native notification delivery should be checked in the packaged app.
-
-```sh
-npm run check          # Preload build and JavaScript unit/DOM checks
-npm run test:desktop   # Actual Electron integration tests on macOS
-npm run test:ios       # Experimental iPhone source/project checks
-npm run check:all      # All available checks
-```
-
-See [testing and release checks](docs/testing.md). GitHub CI runs the JavaScript checks and validates bundled resources; macOS integration and native notification delivery have separate local checks.
-
 ## Privacy and security boundaries
 
 There is no app backend, analytics service, app-owned password form, or server-side message collection. Instagram handles its own traffic under its normal policies. Cookies, cache and website data stay in this app's local browser profile, separate from your ordinary browser. On macOS it normally lives under `~/Library/Application Support/Instagram Messenger/Partitions/instagram-messenger`.
@@ -78,14 +71,6 @@ Instagram runs in a sandboxed Electron renderer with Node integration disabled, 
 Packaging copies application source, UI assets, a bundled preload, a minimal manifest and the license. It excludes browser profiles, credentials, tests, development dependencies and Git history. Test fixtures use synthetic data and temporary profiles.
 
 Please remove private messages, contact details, cookies and tokens from bug reports and screenshots.
-
-## Experimental iPhone source
-
-The `ios/` folder contains a separate SwiftUI/WKWebView prototype for iOS 17+, with independent login and **no notifications or relay**. iPhone development is currently deferred.
-
-The Foundation URL policy and bundled JavaScript have checks, and project/plist/scheme integrity and Swift syntax are validated. This does **not** establish a successful iOS SDK build or device run. Full Xcode, its iOS platform support and a personal signing setup are required. No installable iPhone binary is included.
-
-See [iPhone project and setup](ios/README.md).
 
 ## Contributing
 
