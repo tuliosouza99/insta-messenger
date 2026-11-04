@@ -1,11 +1,27 @@
 const { externalDestination } = require('./policy');
-const { classifyDesktopNavigation, isInstagramHome } = require('./desktop-policy');
+const { classifyDesktopNavigation, isInstagramHome, attachmentDestination } = require('./desktop-policy');
+const { messageMedia } = require('./attachment-viewer');
+const { sharedMessageCard } = require('./live-attachment');
 
-function handleLinkActivation(event, window, openExternal, unsupportedAuth = () => {}, navigateInternal = () => {}) {
+function handleLinkActivation(event, window, openExternal, unsupportedAuth = () => {}, navigateInternal = () => {}, openMedia = () => {}, openNative = () => {}) {
   if (event.type === 'auxclick' && event.button !== 1) return;
   const element = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
   const anchor = element?.closest('a[href]');
   const source = classifyDesktopNavigation(window.location.href);
+  if (window.document.documentElement.hasAttribute('data-messenger-live')) return;
+  const card = source === 'messaging' && /^\/direct\/t\/[^/]+\/?$/.test(window.location.pathname) && sharedMessageCard(element);
+  if (card) {
+    if (event.isTrusted) openNative(card);
+    else { event.preventDefault(); event.stopImmediatePropagation(); }
+    return;
+  }
+  const media = source === 'messaging' && messageMedia(element);
+  if (media) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.isTrusted) openMedia(media);
+    return;
+  }
   const control = element?.closest('button, [role="button"], a[href], [aria-label], [title]');
   const labels = [control?.getAttribute('aria-label'), control?.getAttribute('title'),
     control?.querySelector('svg[aria-label]')?.getAttribute('aria-label')];
@@ -14,6 +30,16 @@ function handleLinkActivation(event, window, openExternal, unsupportedAuth = () 
     && labels.some(label => /^(back|go back|voltar|atrás)$/i.test(label || ''));
   const inMessages = source === 'messaging' || source === 'stories';
   const classification = anchor ? classifyDesktopNavigation(anchor.href) : null;
+  const attachment = source === 'messaging' && /^\/direct\/t\/[^/]+\/?$/.test(window.location.pathname)
+    && anchor?.closest('article, [role="article"], [role="log"], [role="row"], [role="listitem"]')
+    && !anchor.closest('nav, header, [role="navigation"], [role="banner"]')
+    && attachmentDestination(anchor.href);
+  if (attachment) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.isTrusted) navigateInternal({ type: 'attachment', url: attachment });
+    return;
+  }
   if (inMessages && (back || (anchor && isInstagramHome(anchor.href)) || classification === 'stories')) {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -35,8 +61,8 @@ function handleLinkActivation(event, window, openExternal, unsupportedAuth = () 
   if (destination) openExternal(destination);
 }
 
-function installInteractions(window, openExternal, unsupportedAuth, navigateInternal) {
-  const handler = event => handleLinkActivation(event, window, openExternal, unsupportedAuth, navigateInternal);
+function installInteractions(window, openExternal, unsupportedAuth, navigateInternal, openMedia, openNative) {
+  const handler = event => handleLinkActivation(event, window, openExternal, unsupportedAuth, navigateInternal, openMedia, openNative);
   window.addEventListener('click', handler, true);
   window.addEventListener('auxclick', handler, true);
   return () => {

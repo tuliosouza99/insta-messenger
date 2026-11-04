@@ -31,11 +31,12 @@ See [testing and local packaging checks](docs/testing.md). GitHub CI runs the Ja
 ## Features
 
 - Opens directly to your inbox and remembers your login in a dedicated local profile.
-- Keeps Instagram's own conversation list, group chats, composer and in-conversation media where supported by its website.
+- Keeps Instagram's own conversation list, group chats and composer where supported by its website.
+- Opens recognized message photos, videos, shared posts and Reels in a focused attachment viewer. Reels retain Instagram's streaming player, and carousel arrows move through photos in the selected post. **Back to message** (or Escape) returns to the conversation with your draft and place preserved; the viewer cannot browse other posts, profiles or recommendations.
 - Hides recognized feed/Explore/Reels navigation and redirects attempted browsing back to messages.
 - Keeps the conversation Back arrow inside the app.
 - Adds **View story** to recognized conversation headers. Story links stay inside the app and return to the last conversation when closed. Instagram determines whether a story is available.
-- Opens shared posts, Reels, profiles and other public HTTPS links in the normal browser.
+- Opens profiles, other public HTTPS links and post/Reel links outside recognized conversation messages in the normal browser.
 - Shows generic native alerts for new unread activity without message or sender previews.
 - Keeps the inbox running when its window is closed. Clicking an alert reopens it; **Quit** exits.
 - Provides offline retry, native Edit/View/Window menus, zoom, and confirmed local session reset.
@@ -60,7 +61,7 @@ Alerts follow increases in Instagram's unread title counts or explicit accessibl
 
 Calls, camera/microphone access, account switching, tray behavior, dock unread badges and automatic updates are not implemented. File upload pickers remain part of Instagram's interface; downloads ask before opening the browser.
 
-This wrapper uses Instagram's website. It does not use an unofficial messaging API or a business-account API, and it cannot guarantee account-specific login, messaging, media or story availability.
+This wrapper uses Instagram's website. It does not use an unofficial messaging API or a business-account API, and it cannot guarantee account-specific login, messaging, media or story availability. The attachment viewer shows recognized media from the selected message/post; private, unavailable or unsupported layouts offer a return to the message instead of broader Instagram browsing.
 
 ## Privacy and security boundaries
 

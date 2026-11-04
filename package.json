@@ -21,7 +21,7 @@
   "scripts": {
     "start": "npm run build && electron .",
     "build": "node scripts/build.js",
-    "test": "node --test test/policy.test.js test/desktop-policy.test.js test/focus.test.js test/preload.test.js test/story-controls.test.js test/unread.test.js test/notifications.test.js",
+    "test": "node --test test/policy.test.js test/desktop-policy.test.js test/focus.test.js test/preload.test.js test/attachment-viewer.test.js test/live-attachment.test.js test/story-controls.test.js test/unread.test.js test/notifications.test.js",
     "test:desktop": "npm run build && node --test --test-concurrency=1 test/electron.test.js",
     "check:all": "npm run check && npm run test:desktop",
     "check": "npm run build && npm test",

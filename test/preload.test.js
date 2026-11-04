@@ -30,6 +30,45 @@ test('a deliberate shared Reel activation opens the browser instead of replacing
   dom.window.close();
 });
 
+test('a post selected in a conversation message opens only that attachment in the app', () => {
+  const { dom, opened, internal, activate } = setup();
+  const anchor = dom.window.document.querySelector('#shared');
+  const row = dom.window.document.createElement('div');
+  row.setAttribute('role', 'row');
+  anchor.replaceWith(row);
+  row.append(anchor);
+  anchor.target = '_blank';
+  activate('#shared span');
+  assert.deepEqual(internal, [{ type: 'attachment', url: 'https://www.instagram.com/reel/123/' }]);
+  assert.deepEqual(opened, []);
+  activate('#shared', { isTrusted: false });
+  assert.equal(internal.length, 1);
+  dom.window.close();
+});
+
+test('button-based shared Reels activate their native player instead of opening the cover as a photo', () => {
+  const { dom, opened, internal, activate } = setup();
+  dom.window.document.querySelector('main').innerHTML = '<div role="row"><div role="button" tabindex="0" id="card"><a href="/creator/">Creator</a><img id="cover" alt="Clip" width="320" height="480" src="https://scontent.cdninstagram.com/cover.jpg"></div></div>';
+  const native = [];
+  const event = { type: 'click', button: 0, isTrusted: true, target: dom.window.document.querySelector('#cover'),
+    defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() {} };
+  handleLinkActivation(event, dom.window, url => opened.push(url), () => {}, action => internal.push(action), () => assert.fail('cover opened as photo'), card => native.push(card.id));
+  assert.equal(event.defaultPrevented, false);
+  assert.deepEqual(native, ['card']);
+  assert.deepEqual(opened, []);
+  dom.window.close();
+});
+
+test('attachment access is not granted from the inbox or story viewer', () => {
+  for (const path of ['/direct/inbox/', '/stories/friend/123/']) {
+    const { dom, internal, activate } = setup(path);
+    dom.window.document.querySelector('main').setAttribute('role', 'log');
+    activate('#shared');
+    assert.deepEqual(internal, []);
+    dom.window.close();
+  }
+});
+
 test('synthetic page clicks cannot open other applications', () => {
   const { dom, opened, activate } = setup();
   const event = activate('#shared', { isTrusted: false });

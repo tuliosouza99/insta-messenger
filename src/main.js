@@ -6,6 +6,7 @@ const { INBOX_URL, classifyNavigation, externalDestination } = require('./policy
 const { classifyDesktopNavigation } = require('./desktop-policy');
 const { installMenu } = require('./menu');
 const { createNotificationController } = require('./notifications');
+const { createAttachmentController } = require('./attachments');
 
 app.setName('Instagram Messenger');
 app.enableSandbox();
@@ -14,6 +15,7 @@ if (profileOverride) app.setPath('userData', path.resolve(profileOverride));
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const PARTITION = 'persist:instagram-messenger';
+const attachments = createAttachmentController({ getWindow, partition: PARTITION });
 const ERROR_URL = 'app://ui/error.html';
 let window;
 let retryUrl = INBOX_URL;
@@ -61,6 +63,7 @@ function isTrustedSender(event) {
 }
 
 async function loadTarget(url) {
+  attachments.close();
   const current = getWindow();
   if (!current) return;
   try { await current.loadURL(url); } catch (error) {
@@ -127,7 +130,7 @@ function createWindow() {
       current.hide();
     }
   });
-  current.on('closed', () => { if (window === current) window = null; });
+  current.on('closed', () => { attachments.close(); if (window === current) window = null; });
   wc.on('page-title-updated', event => { event.preventDefault(); });
   wc.on('will-navigate', guardNavigation);
   wc.on('will-redirect', (event, url, _inPlace, isMainFrame) => {
@@ -135,6 +138,7 @@ function createWindow() {
   });
   wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame) return;
+    attachments.close();
     if (!['messaging', 'auth', 'stories'].includes(classifyDesktopNavigation(url)) && !isRecoveryUrl(url)) {
       redirectToMessages(classifyDesktopNavigation(lastEmbeddedUrl) === 'stories');
     } else {
@@ -143,6 +147,7 @@ function createWindow() {
     }
   });
   wc.on('did-navigate', (_event, url) => {
+    attachments.close();
     if (!['messaging', 'auth', 'stories'].includes(classifyDesktopNavigation(url)) && !isRecoveryUrl(url)) {
       redirectToMessages(classifyDesktopNavigation(lastEmbeddedUrl) === 'stories');
     } else if (!isRecoveryUrl(url)) rememberEmbeddedUrl(url);
@@ -169,6 +174,7 @@ async function resetSession() {
   const current = getWindow();
   if (!current || resetting) return;
   resetting = true;
+  attachments.close();
   current.webContents.stop();
   try {
     const ses = current.webContents.session;
@@ -200,9 +206,10 @@ if (!app.requestSingleInstanceLock()) {
     ses.setUserAgent(ses.getUserAgent().replace(/\sElectron\/\S+/g, '').replace(/\sinstagram-messenger-desktop\/\S+/g, ''));
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
-    ses.on('will-download', (event, item) => {
+    ses.on('will-download', (event, item, contents) => {
       // Website downloads are not an implicit way to launch executables or handlers.
       event.preventDefault();
+      if (attachments.owns(contents)) return;
       const destination = externalDestination(item.getURL());
       if (destination && getWindow()) {
         void dialog.showMessageBox(getWindow(), { type: 'info', message: 'Open this attachment in your browser?',
@@ -214,6 +221,7 @@ if (!app.requestSingleInstanceLock()) {
       ['/error.html', ['error.html', 'text/html; charset=utf-8']],
       ['/error.css', ['error.css', 'text/css; charset=utf-8']],
       ['/error.js', ['error.js', 'text/javascript; charset=utf-8']],
+      ['/attachment-error.html', ['attachment-error.html', 'text/html; charset=utf-8']],
     ]);
     ses.protocol.handle('app', async request => {
       const url = new URL(request.url);
@@ -244,7 +252,10 @@ if (!app.requestSingleInstanceLock()) {
         if (source === 'messaging') lastMessagingUrl = event.senderFrame.url;
         void loadTarget(action.url);
       }
+      else if (action.type === 'attachment' && source === 'messaging'
+        && /^\/direct\/t\/[^/]+\/?$/.test(new URL(event.senderFrame.url).pathname)) attachments.open(action.url);
     });
+    ipcMain.on('messenger:close-attachment', event => attachments.closeFrom(event));
     ipcMain.on('messenger:recover', (event, action) => {
       if (!isTrustedSender(event) || !isRecoveryUrl(event.senderFrame.url)) return;
       if (action === 'retry') void loadTarget(retryUrl);
@@ -261,6 +272,7 @@ if (!app.requestSingleInstanceLock()) {
       notificationController.notifyUnread();
     });
     installMenu({ getWindow, openInbox, reload: () => {
+      attachments.close();
       const current = getWindow();
       if (!current) createWindow();
       else if (isRecoveryUrl(current.webContents.getURL())) void loadTarget(retryUrl);
