@@ -4,6 +4,8 @@ An unofficial macOS app for Instagram messages, with less browsing around them. 
 
 Independent project. Not affiliated with or endorsed by Instagram or Meta.
 
+For the personal iPhone companion, see the [Xcode setup and installation instructions](ios/README.md).
+
 ## Build from source
 
 Requires macOS, Git, Node.js 24+ and npm. Apple Silicon is the tested platform; Intel Mac, Windows and Linux builds have not been verified.
