@@ -50,33 +50,723 @@
     }
   });
 
-  // ios/interactions.js
+  // src/desktop-policy.js
+  var require_desktop_policy = __commonJS({
+    "src/desktop-policy.js"(exports, module) {
+      var { classifyNavigation, externalDestination } = require_policy();
+      function instagramUrl(rawUrl) {
+        const destination = externalDestination(rawUrl);
+        if (!destination) return null;
+        const url = new URL(destination);
+        if (!["www.instagram.com", "instagram.com"].includes(url.hostname)) return null;
+        try {
+          if (!["www.instagram.com", "instagram.com"].includes(new URL(rawUrl).hostname)) return null;
+        } catch {
+          return null;
+        }
+        return url;
+      }
+      function classifyDesktopNavigation(rawUrl) {
+        const category = classifyNavigation(rawUrl);
+        if (category !== "external") return category;
+        const url = instagramUrl(rawUrl);
+        if (url && /^\/stories\/[a-z0-9._]{1,30}(?:\/\d+)?\/?$/i.test(url.pathname)) return "stories";
+        return category;
+      }
+      function isInstagramHome(rawUrl) {
+        const url = instagramUrl(rawUrl);
+        return !!url && url.pathname === "/";
+      }
+      function attachmentDestination(rawUrl) {
+        const url = instagramUrl(rawUrl);
+        const match = url && /^\/(?:[a-z0-9._]{1,30}\/)?(p|reel|tv)\/([a-z0-9_-]{1,128})\/?$/i.exec(url.pathname);
+        if (!match) return null;
+        const destination = new URL(`https://www.instagram.com/${match[1]}/${match[2]}/`);
+        const index = url.searchParams.get("img_index");
+        if (/^[1-9]\d{0,2}$/.test(index || "")) destination.searchParams.set("img_index", index);
+        return destination.href;
+      }
+      function sameAttachment(selected, candidate) {
+        const first = attachmentDestination(selected);
+        const next = attachmentDestination(candidate);
+        return !!first && !!next && new URL(first).pathname.split("/")[2] === new URL(next).pathname.split("/")[2];
+      }
+      module.exports = { classifyDesktopNavigation, isInstagramHome, attachmentDestination, sameAttachment };
+    }
+  });
+
+  // src/attachment-viewer.js
+  var require_attachment_viewer = __commonJS({
+    "src/attachment-viewer.js"(exports, module) {
+      var { sameAttachment, attachmentDestination } = require_desktop_policy();
+      var VIEWER_CSS = "html { background: #101114 !important; overflow: hidden !important; } body > :not(#messenger-attachment-viewer), body > :not(#messenger-attachment-viewer) * { visibility: hidden !important; pointer-events: none !important; }";
+      function mediaSource(raw, document) {
+        try {
+          const url = new URL(raw, document.location.href);
+          if (url.protocol === "blob:" && url.origin === document.location.origin) return url.href;
+          if (url.protocol === "https:" && !url.username && !url.password && !url.port && /(^|\.)(cdninstagram\.com|fbcdn\.net)$/.test(url.hostname)) return url.href;
+        } catch {
+        }
+        return null;
+      }
+      function containerMedia(container, document) {
+        const result = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const media of container.querySelectorAll("video, img")) {
+          if (media.closest('header, [role="banner"]')) continue;
+          if (media.tagName === "IMG") {
+            const rect = media.getBoundingClientRect();
+            const width = rect.width || media.width || media.naturalWidth;
+            const height = rect.height || media.height || media.naturalHeight;
+            if (Math.max(width, height) < 160) continue;
+          }
+          const src = mediaSource(media.currentSrc || media.getAttribute("src") || media.querySelector("source")?.src, document);
+          if (!src || seen.has(src)) continue;
+          seen.add(src);
+          result.push({ tag: media.tagName.toLowerCase(), src, alt: media.getAttribute("alt") || "" });
+        }
+        return result;
+      }
+      function selectAttachmentMedia(document, selected) {
+        for (const anchor of document.querySelectorAll("a[href]")) {
+          if (!sameAttachment(selected, anchor.href)) continue;
+          for (let parent = anchor.parentElement; parent && !parent.matches("body, html"); parent = parent.parentElement) {
+            const posts = Array.from(parent.querySelectorAll("a[href]")).filter((link) => /\/(p|reel|tv)\//.test(link.pathname));
+            if (posts.some((link) => !sameAttachment(selected, link.href))) break;
+            const media = containerMedia(parent, document);
+            if (media.length) return media;
+            if (parent.matches('main, [role="main"]')) break;
+          }
+        }
+        return [];
+      }
+      function messageMedia(element) {
+        const media = element?.closest("img, video");
+        if (!media || !/^\/direct\/t\/[^/]+\/?$/.test(media.ownerDocument.location.pathname) || !media.closest('article, [role="article"], [role="row"], [role="log"], [role="listitem"]') || media.closest('a[href], header, nav, [role="banner"], [role="navigation"]')) return null;
+        if (media.tagName === "IMG") {
+          const rect = media.getBoundingClientRect();
+          if (Math.max(
+            rect.width || media.width || media.naturalWidth,
+            rect.height || media.height || media.naturalHeight
+          ) < 160) return null;
+        }
+        const src = mediaSource(media.currentSrc || media.getAttribute("src") || media.querySelector("source")?.src, media.ownerDocument);
+        return src ? [{ tag: media.tagName.toLowerCase(), src, alt: media.getAttribute("alt") || "" }] : null;
+      }
+      function installAttachmentViewer2(window2, selected, onBack, mediaItems = null) {
+        const { document } = window2;
+        const previousFocus = document.activeElement;
+        const background = /* @__PURE__ */ new Map();
+        const muted = /* @__PURE__ */ new Map();
+        const moved = [];
+        const host = document.createElement("div");
+        host.id = "messenger-attachment-viewer";
+        host.style.cssText = "position:fixed!important;inset:0!important;z-index:2147483647!important;display:block!important;background:#101114!important;";
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = `<style>
+    :host { color-scheme: dark; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; color: #f5f5f5; }
+    * { box-sizing: border-box; }
+    section { height: 100%; display: flex; flex-direction: column; background: #101114; }
+    header { flex: none; padding: 14px 20px; border-bottom: 1px solid #303238; }
+    button { font: inherit; color: #f5f5f5; background: #24262c; border: 1px solid #545862; border-radius: 8px; padding: 9px 14px; cursor: pointer; }
+    button:focus-visible { outline: 2px solid #a8c7ff; outline-offset: 3px; }
+    main { flex: 1; min-height: 0; overflow: auto; padding: 20px; text-align: center; }
+    img, video { display: block; max-width: 100%; max-height: calc(100vh - 120px); margin: 0 auto 16px; object-fit: contain; }
+    p { margin: 40px auto; color: #c3c6ce; }
+  </style><section role="dialog" aria-modal="true" aria-label="Message attachment"><header><button type="button">Back to message</button></header><main><p role="status">Loading attachment\u2026</p></main></section>`;
+        const back = root.querySelector("button");
+        const content = root.querySelector("main");
+        back.addEventListener("click", (event) => {
+          if (event.isTrusted) onBack();
+        });
+        let captured = false;
+        const refresh = () => {
+          if (!host.isConnected) document.body.append(host);
+          for (const element of document.body.children) {
+            if (element === host || background.has(element)) continue;
+            background.set(element, element.getAttribute("inert"));
+            element.setAttribute("inert", "");
+          }
+          for (const video of document.querySelectorAll("video, audio")) {
+            if (!muted.has(video)) muted.set(video, video.muted);
+            video.muted = true;
+            if (!video.paused) video.pause();
+          }
+          if (captured) return;
+          const media = mediaItems || selectAttachmentMedia(document, selected);
+          if (!media.length) return;
+          captured = true;
+          content.replaceChildren();
+          for (const item of media) {
+            const original = item.tag === "video" && item.src.startsWith("blob:") && Array.from(document.querySelectorAll("video")).find((video) => (video.currentSrc || video.src) === item.src);
+            const element = original || document.createElement(item.tag);
+            if (original) {
+              moved.push({
+                element,
+                parent: element.parentNode,
+                next: element.nextSibling,
+                attributes: ["controls", "playsinline", "preload", "controlslist"].map((name) => [name, element.getAttribute(name)]),
+                pictureInPicture: element.disablePictureInPicture,
+                remotePlayback: element.disableRemotePlayback
+              });
+              element.muted = muted.get(element) || false;
+            } else element.src = item.src;
+            if (item.tag === "video") {
+              element.controls = true;
+              element.playsInline = true;
+              element.preload = "metadata";
+              element.setAttribute("controlsList", "nodownload nofullscreen noremoteplayback");
+              element.disablePictureInPicture = true;
+              element.disableRemotePlayback = true;
+            } else element.alt = item.alt;
+            const error = () => {
+              const message = document.createElement("p");
+              message.textContent = "This attachment could not be loaded. Go back to the message and try again.";
+              element.replaceWith(message);
+            };
+            element.addEventListener("error", error, { once: true });
+            if (original) moved.at(-1).error = error;
+            content.append(element);
+          }
+        };
+        const guard = (event) => {
+          if (event.type === "contextmenu") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+          }
+          if (event.type === "keydown" && event.key === "Escape" && event.isTrusted) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            onBack();
+            return;
+          }
+          if (event.composedPath().includes(host)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        };
+        const events = ["click", "auxclick", "keydown", "keyup", "wheel", "touchmove", "contextmenu", "submit"];
+        for (const type of events) window2.addEventListener(type, guard, { capture: true, passive: false });
+        for (const type of events) root.addEventListener(type, (event) => event.stopPropagation());
+        const observer = new window2.MutationObserver(refresh);
+        observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "href"] });
+        const silence = (event) => {
+          event.target.muted = true;
+          event.target.pause();
+        };
+        document.addEventListener("play", silence, true);
+        document.addEventListener("load", refresh, true);
+        document.addEventListener("loadedmetadata", refresh, true);
+        refresh();
+        back.focus();
+        const unavailable = () => {
+          if (!captured) content.querySelector("p").textContent = "This attachment is unavailable in the app. Go back to the message to continue.";
+        };
+        if (!mediaItems && !attachmentDestination(selected)) unavailable();
+        const timeout = window2.setTimeout(unavailable, 12e3);
+        return () => {
+          window2.clearTimeout(timeout);
+          observer.disconnect();
+          for (const type of events) window2.removeEventListener(type, guard, true);
+          document.removeEventListener("play", silence, true);
+          document.removeEventListener("load", refresh, true);
+          document.removeEventListener("loadedmetadata", refresh, true);
+          for (const item of moved) {
+            const { element, parent, next, attributes } = item;
+            element.removeEventListener("error", item.error);
+            if (!element.paused) element.pause();
+            for (const [name, value] of attributes) {
+              if (value === null) element.removeAttribute(name);
+              else element.setAttribute(name, value);
+            }
+            element.disablePictureInPicture = item.pictureInPicture;
+            element.disableRemotePlayback = item.remotePlayback;
+            parent.insertBefore(element, next?.parentNode === parent ? next : null);
+          }
+          for (const [element, wasMuted] of muted) element.muted = wasMuted;
+          host.remove();
+          for (const [element, inert] of background) {
+            if (inert === null) element.removeAttribute("inert");
+            else element.setAttribute("inert", inert);
+          }
+          if (previousFocus?.isConnected) previousFocus.focus();
+        };
+      }
+      module.exports = { VIEWER_CSS, selectAttachmentMedia, messageMedia, installAttachmentViewer: installAttachmentViewer2 };
+    }
+  });
+
+  // src/live-attachment.js
+  var require_live_attachment = __commonJS({
+    "src/live-attachment.js"(exports, module) {
+      var { sameAttachment } = require_desktop_policy();
+      function samePostLink(selected, rawUrl) {
+        try {
+          const url = new URL(rawUrl);
+          const post = /^\/(?:[a-z0-9._]{1,30}\/)?(p|reel|tv)\/([a-z0-9_-]{1,128})(?:\/|$)/i.exec(url.pathname);
+          if (!post) return false;
+          url.pathname = `/${post[1]}/${post[2]}/`;
+          return sameAttachment(selected, url.href);
+        } catch {
+          return false;
+        }
+      }
+      function label(control) {
+        const icon = control.querySelector("svg[aria-label], img[alt]");
+        return control.getAttribute("aria-label") || control.getAttribute("title") || icon?.getAttribute("aria-label") || icon?.getAttribute("alt") || "";
+      }
+      function reelThumbnail(card) {
+        return card?.querySelector('img[alt="Clip" i], img[alt="Reel" i]');
+      }
+      function sharedMessageCard(element) {
+        if (!element || element.closest("a[href]")) return null;
+        const card = element.closest('button, [role="button"]');
+        if (!card || !card.querySelector("img") || card.closest('nav, header, [role="navigation"], [role="banner"]')) return null;
+        const reel = reelThumbnail(card);
+        const inMessage = card.closest('article, [role="article"], [role="row"], [role="log"], [role="listitem"]');
+        if (!inMessage && !(reel && card.closest('main, [role="main"]'))) return null;
+        return card.querySelector("a[href]") || reel ? card : null;
+      }
+      function mediaElements(root) {
+        return Array.from(root.querySelectorAll("video, img")).filter((media) => {
+          if (media.closest('header, [role="banner"]')) return false;
+          if (media.tagName === "VIDEO") return true;
+          const rect = media.getBoundingClientRect();
+          return Math.max(
+            rect.width || media.width || media.naturalWidth,
+            rect.height || media.height || media.naturalHeight
+          ) >= 160;
+        });
+      }
+      function carouselControls(root) {
+        return Array.from(root.querySelectorAll('button, [role="button"]')).filter((control) => /^(next|previous|go back|next photo|previous photo|avançar|próximo|anterior|seguinte)$/i.test(label(control)));
+      }
+      function stageFor(media, boundary) {
+        if (media.tagName === "IMG" || media.closest('ul, ol, [role="list"]')) {
+          for (let parent = media.parentElement; parent; parent = parent.parentElement) {
+            if (carouselControls(parent).length) return parent;
+            if (parent === boundary) break;
+          }
+        }
+        return media.parentElement;
+      }
+      function installLiveAttachment2(window2, { selected = null, opener = null, onBack }) {
+        const { document } = window2;
+        const before = new Set(document.querySelectorAll('video, img, a[href], button, [role="button"]'));
+        const previousFocus = document.activeElement;
+        const attributes = /* @__PURE__ */ new Map();
+        const styles = /* @__PURE__ */ new Map();
+        const videos = /* @__PURE__ */ new Map();
+        const muted = /* @__PURE__ */ new Map();
+        let stage;
+        let selectedMedia;
+        let carouselWidth;
+        let closeControl;
+        let delegated;
+        let stopped = false;
+        const remember = (element, name, value) => {
+          if (!attributes.has(element)) attributes.set(element, /* @__PURE__ */ new Map());
+          if (!attributes.get(element).has(name)) attributes.get(element).set(name, element.getAttribute(name));
+          if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+        };
+        const style = (element, name, value) => {
+          if (!styles.has(element)) styles.set(element, /* @__PURE__ */ new Map());
+          if (!styles.get(element).has(name)) styles.get(element).set(name, [element.style.getPropertyValue(name), element.style.getPropertyPriority(name)]);
+          if (element.style.getPropertyValue(name) !== value || element.style.getPropertyPriority(name) !== "important") element.style.setProperty(name, value, "important");
+        };
+        const backdrop = document.createElement("div");
+        backdrop.dataset.messengerLiveBackdrop = "";
+        backdrop.style.cssText = "position:fixed;inset:0;background:#101114;z-index:2147483644;";
+        const host = document.createElement("div");
+        host.id = "messenger-attachment-viewer";
+        host.dataset.messengerLiveToolbar = "";
+        host.style.cssText = "position:fixed;inset:0 0 auto;z-index:2147483647;color:#f5f5f5;background:#101114;";
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = '<style>:host{font:15px -apple-system,BlinkMacSystemFont,sans-serif}header{padding:14px 20px;border-bottom:1px solid #303238}button{font:inherit;color:#f5f5f5;background:#24262c;border:1px solid #545862;border-radius:8px;padding:9px 14px;cursor:pointer}button:focus-visible{outline:2px solid #a8c7ff;outline-offset:3px}p{position:fixed;top:100px;left:24px;color:#c3c6ce}</style><header><button type="button">Back to message</button></header><p role="status">Loading attachment\u2026</p>';
+        const stylesheet = document.createElement("style");
+        stylesheet.textContent = `
+    html[data-messenger-live] { overflow:hidden !important; }
+    html[data-messenger-live] body * { visibility:hidden !important; pointer-events:none !important; }
+    html[data-messenger-live] [data-messenger-live-backdrop], html[data-messenger-live] [data-messenger-live-toolbar],
+    html[data-messenger-live] [data-messenger-live-allow], html[data-messenger-live] [data-messenger-live-allow] * { visibility:visible !important; pointer-events:auto !important; }
+    html[data-messenger-live] body > [data-messenger-live-branch] { position:relative !important; z-index:2147483645 !important; }
+  `;
+        document.head.append(stylesheet);
+        document.body.append(backdrop, host);
+        remember(document.documentElement, "data-messenger-live", "");
+        function findSelection() {
+          if (selected) {
+            for (const anchor of document.querySelectorAll("a[href]")) {
+              if (!samePostLink(selected, anchor.href)) continue;
+              for (let parent = anchor.parentElement; parent && !parent.matches("body, html"); parent = parent.parentElement) {
+                const links = Array.from(parent.querySelectorAll("a[href]")).filter((link) => /\/(p|reel|tv)\//.test(link.pathname));
+                if (links.some((link) => !samePostLink(selected, link.href))) break;
+                const media = mediaElements(parent);
+                const reel2 = /^\/(reel|tv)\//.test(new URL(selected).pathname);
+                const chosen = reel2 ? media.find((item) => item.tagName === "VIDEO") : media[0];
+                if (chosen) return { media: chosen, boundary: parent };
+              }
+            }
+            const canonical = document.querySelector('link[rel="canonical"]')?.href;
+            const articles = document.querySelectorAll("article");
+            if (sameAttachment(selected, canonical) && articles.length === 1) {
+              const article = articles[0];
+              const otherPost = Array.from(article.querySelectorAll("a[href]")).some((link) => /\/(p|reel|tv)\//.test(link.pathname) && !samePostLink(selected, link.href));
+              if (otherPost) return null;
+              const media = mediaElements(article);
+              const reel2 = /^\/(reel|tv)\//.test(new URL(selected).pathname);
+              const chosen = reel2 ? media.find((item) => item.tagName === "VIDEO") : media[0];
+              if (chosen) return { media: chosen, boundary: article };
+            }
+            return null;
+          }
+          const reel = !!reelThumbnail(opener);
+          for (const control of document.querySelectorAll('a[href], button, [role="button"]')) {
+            if (before.has(control)) continue;
+            const name = label(control);
+            const isClose = /^(close|fechar|cerrar)$/i.test(name);
+            const isDialogBack = control.closest('dialog, [role="dialog"], [aria-modal="true"]') && /^(back|go back|voltar|atrás)$/i.test(name);
+            if (!isClose && !isDialogBack) continue;
+            if (control.parentElement && !control.parentElement.contains(opener)) closeControl ??= control;
+            for (let parent = control.parentElement; parent && !parent.matches("body, html") && !parent.contains(opener); parent = parent.parentElement) {
+              const media = mediaElements(parent).filter((item) => !before.has(item) && (!reel || item.tagName === "VIDEO"));
+              if (media.length) {
+                closeControl = control;
+                return { media: media[0], boundary: parent };
+              }
+            }
+          }
+          return null;
+        }
+        function stageMedia() {
+          return selectedMedia?.tagName === "VIDEO" && !carouselWidth ? stage.contains(selectedMedia) ? [selectedMedia] : [] : mediaElements(stage);
+        }
+        function resize() {
+          if (!stage) return;
+          const available = stageMedia();
+          const frame = stage.getBoundingClientRect();
+          const overlap = (media2) => {
+            const rect = media2.getBoundingClientRect();
+            return Math.max(0, Math.min(rect.right, frame.right) - Math.max(rect.left, frame.left)) * Math.max(0, Math.min(rect.bottom, frame.bottom) - Math.max(rect.top, frame.top));
+          };
+          const player = available.find((media2) => media2.tagName === "VIDEO" && !media2.closest('ul, ol, [role="list"]'));
+          const media = player || available.reduce((best, item) => !best || overlap(item) > overlap(best) ? item : best, null);
+          const width = media?.videoWidth || media?.naturalWidth || media?.width || 640;
+          const height = media?.videoHeight || media?.naturalHeight || media?.height || 640;
+          const ratio = width / height || 1;
+          const availableHeight = Math.max(180, window2.innerHeight - 120);
+          const stageWidth = Math.min(window2.innerWidth - 48, availableHeight * ratio, 1200, carouselWidth || Infinity);
+          const layoutWidth = carouselWidth || stageWidth;
+          for (const [name, value] of Object.entries({ position: "fixed", left: `${(window2.innerWidth - stageWidth) / 2}px`, top: "88px", width: `${layoutWidth}px`, height: `${layoutWidth / ratio}px`, margin: "0px", overflow: "hidden", "z-index": "2147483646" })) style(stage, name, value);
+          if (carouselWidth) {
+            style(stage, "transform-origin", "0px 0px");
+            style(stage, "transform", `scale(${stageWidth / carouselWidth})`);
+          }
+        }
+        function refresh() {
+          if (stopped) return;
+          if (!stage) {
+            const selection = findSelection();
+            if (!selection) return;
+            selectedMedia = selection.media;
+            stage = stageFor(selectedMedia, selection.boundary);
+            if (carouselControls(stage).length) carouselWidth = stage.getBoundingClientRect().width || selection.media.getBoundingClientRect().width || selection.media.width || selection.media.naturalWidth || 640;
+            remember(stage, "data-messenger-live-stage", "");
+            for (let ancestor = stage.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+              if (ancestor.parentElement === document.body) remember(ancestor, "data-messenger-live-branch", "");
+              const computed = window2.getComputedStyle(ancestor);
+              for (const property of ["transform", "filter", "perspective", "contain"]) {
+                if (computed.getPropertyValue(property) && computed.getPropertyValue(property) !== "none") style(ancestor, property, "none");
+              }
+              style(ancestor, "overflow", "visible");
+            }
+            root.querySelector("p").hidden = true;
+            resize();
+          }
+          const elements = stageMedia();
+          if (selectedMedia?.tagName === "VIDEO" && !carouselWidth) {
+            for (const video of stage.querySelectorAll("video")) {
+              if (video !== selectedMedia && !video.paused) silence({ target: video });
+            }
+          }
+          const hasPlayer = elements.some((media) => media.tagName === "VIDEO");
+          for (const media of elements) {
+            if (hasPlayer && media.tagName === "IMG" && !media.closest('ul, ol, [role="list"]')) {
+              media.removeAttribute("data-messenger-live-allow");
+              continue;
+            }
+            remember(media, "data-messenger-live-allow", "");
+            if (media.tagName !== "VIDEO" || videos.has(media)) continue;
+            videos.set(media, { controls: media.controls, pictureInPicture: media.disablePictureInPicture, remotePlayback: media.disableRemotePlayback });
+            for (const attr of ["controls", "playsinline", "controlslist"]) remember(media, attr, attr === "controlslist" ? "nodownload nofullscreen noremoteplayback" : "");
+            media.disablePictureInPicture = true;
+            media.disableRemotePlayback = true;
+            for (const [name, value] of Object.entries({ width: "100%", height: "100%", "object-fit": "contain" })) style(media, name, value);
+            media.addEventListener("click", stopPropagation);
+            media.addEventListener("loadedmetadata", resize);
+          }
+          for (const control of carouselControls(stage)) remember(control, "data-messenger-live-allow", "");
+          resize();
+        }
+        function stopPropagation(event) {
+          event.stopPropagation();
+        }
+        function silence(event) {
+          if (stage && stageMedia().includes(event.target)) return;
+          if (!muted.has(event.target)) muted.set(event.target, event.target.muted);
+          event.target.muted = true;
+          if (!event.target.paused) event.target.pause();
+        }
+        function activate(control) {
+          delegated = control;
+          const href = control?.getAttribute("href");
+          if (href !== null && href !== void 0) control.removeAttribute("href");
+          try {
+            control?.click();
+          } finally {
+            if (href !== null && href !== void 0) control.setAttribute("href", href);
+            delegated = null;
+          }
+        }
+        function guard(event) {
+          if (delegated && event.composedPath().includes(delegated)) return;
+          if (event.type === "keydown" && event.key === "Escape" && event.isTrusted) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            onBack();
+            return;
+          }
+          const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+          const allowed = target?.closest("[data-messenger-live-allow]");
+          const inStage = allowed && stage?.contains(allowed);
+          if (event.type === "touchmove" && inStage && allowed.tagName === "VIDEO") return;
+          if (event.type !== "contextmenu" && event.type !== "wheel" && event.type !== "touchmove" && (event.composedPath().includes(host) || inStage)) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+        const events = ["click", "auxclick", "keydown", "keyup", "wheel", "touchmove", "contextmenu", "submit"];
+        for (const type of events) window2.addEventListener(type, guard, { capture: true, passive: false });
+        for (const type of events) root.addEventListener(type, stopPropagation);
+        root.querySelector("button").addEventListener("click", (event) => {
+          if (event.isTrusted) onBack();
+        });
+        const observer = new window2.MutationObserver(refresh);
+        observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["src", "srcset", "aria-label", "class", "style"] });
+        window2.addEventListener("resize", resize);
+        document.addEventListener("play", silence, true);
+        document.addEventListener("load", refresh, true);
+        document.addEventListener("loadedmetadata", refresh, true);
+        refresh();
+        root.querySelector("button").focus();
+        const timeout = window2.setTimeout(() => {
+          if (!stage) root.querySelector("p").textContent = "This attachment could not be loaded. Go back to the message and try again.";
+        }, 15e3);
+        return function stop({ close = false } = {}) {
+          if (stopped) return;
+          stopped = true;
+          if (close && opener && !closeControl?.isConnected) findSelection();
+          window2.clearTimeout(timeout);
+          observer.disconnect();
+          for (const type of events) window2.removeEventListener(type, guard, true);
+          window2.removeEventListener("resize", resize);
+          document.removeEventListener("play", silence, true);
+          document.removeEventListener("load", refresh, true);
+          document.removeEventListener("loadedmetadata", refresh, true);
+          for (const [video, original] of videos) {
+            video.removeEventListener("click", stopPropagation);
+            video.removeEventListener("loadedmetadata", resize);
+            video.disablePictureInPicture = original.pictureInPicture;
+            video.disableRemotePlayback = original.remotePlayback;
+            if (!video.paused) video.pause();
+          }
+          for (const [video, wasMuted] of muted) video.muted = wasMuted;
+          for (const [element, saved] of styles) for (const [name, [value, priority]] of saved) {
+            if (value) element.style.setProperty(name, value, priority);
+            else element.style.removeProperty(name);
+          }
+          for (const [element, saved] of attributes) for (const [name, value] of saved) {
+            if (value === null) element.removeAttribute(name);
+            else element.setAttribute(name, value);
+          }
+          stylesheet.remove();
+          backdrop.remove();
+          host.remove();
+          if (close && closeControl?.isConnected) activate(closeControl);
+          if (previousFocus?.isConnected) previousFocus.focus();
+        };
+      }
+      module.exports = { sharedMessageCard, installLiveAttachment: installLiveAttachment2 };
+    }
+  });
+
+  // src/interactions.js
   var require_interactions = __commonJS({
-    "ios/interactions.js"(exports, module) {
-      var { classifyNavigation } = require_policy();
-      function handleLinkActivation2(event, window2, openExternal = () => {
+    "src/interactions.js"(exports, module) {
+      var { externalDestination } = require_policy();
+      var { classifyDesktopNavigation, isInstagramHome, attachmentDestination } = require_desktop_policy();
+      var { messageMedia } = require_attachment_viewer();
+      var { sharedMessageCard } = require_live_attachment();
+      function handleLinkActivation2(event, window2, openExternal, unsupportedAuth = () => {
+      }, navigateInternal = () => {
+      }, openMedia = () => {
+      }, openNative = () => {
       }) {
+        if (event.type === "auxclick" && event.button !== 1) return;
         const element = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
         const anchor = element?.closest("a[href]");
+        const source = classifyDesktopNavigation(window2.location.href);
+        if (window2.document.documentElement.hasAttribute("data-messenger-live")) return;
+        const card = source === "messaging" && /^\/direct\/t\/[^/]+\/?$/.test(window2.location.pathname) && sharedMessageCard(element);
+        if (card) {
+          if (event.isTrusted) openNative(card);
+          else {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+          return;
+        }
+        const media = source === "messaging" && messageMedia(element);
+        if (media) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (event.isTrusted) openMedia(media);
+          return;
+        }
+        const control = element?.closest('button, [role="button"], a[href], [aria-label], [title]');
+        const labels = [
+          control?.getAttribute("aria-label"),
+          control?.getAttribute("title"),
+          control?.querySelector("svg[aria-label]")?.getAttribute("aria-label")
+        ];
+        const back = source === "messaging" && control && !control.closest('dialog, [role="dialog"], [aria-modal="true"], article, [role="article"], [role="log"], [role="row"], [role="listitem"], [contenteditable="true"]') && labels.some((label) => /^(back|go back|voltar|atrás)$/i.test(label || ""));
+        const inMessages = source === "messaging" || source === "stories";
+        const classification = anchor ? classifyDesktopNavigation(anchor.href) : null;
+        const attachment = source === "messaging" && /^\/direct\/t\/[^/]+\/?$/.test(window2.location.pathname) && anchor?.closest('article, [role="article"], [role="log"], [role="row"], [role="listitem"]') && !anchor.closest('nav, header, [role="navigation"], [role="banner"]') && attachmentDestination(anchor.href);
+        if (attachment) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (event.isTrusted) navigateInternal({ type: "attachment", url: attachment });
+          return;
+        }
+        if (inMessages && (back || anchor && isInstagramHome(anchor.href) || classification === "stories")) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (event.isTrusted) {
+            navigateInternal(classification === "stories" && !back ? { type: "story", url: anchor.href } : { type: "messages" });
+          }
+          return;
+        }
+        if (!anchor) return;
+        if (classification === "messaging" || classification === "auth") return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.isTrusted) return;
+        if (source === "auth") {
+          unsupportedAuth();
+          return;
+        }
+        if (!inMessages) return;
+        const destination = externalDestination(anchor.href);
+        if (destination) openExternal(destination);
+      }
+      function installInteractions(window2, openExternal, unsupportedAuth, navigateInternal, openMedia, openNative) {
+        const handler2 = (event) => handleLinkActivation2(event, window2, openExternal, unsupportedAuth, navigateInternal, openMedia, openNative);
+        window2.addEventListener("click", handler2, true);
+        window2.addEventListener("auxclick", handler2, true);
+        return () => {
+          window2.removeEventListener("click", handler2, true);
+          window2.removeEventListener("auxclick", handler2, true);
+        };
+      }
+      module.exports = { handleLinkActivation: handleLinkActivation2, installInteractions };
+    }
+  });
+
+  // ios/interactions.js
+  var require_interactions2 = __commonJS({
+    "ios/interactions.js"(exports, module) {
+      var { classifyNavigation } = require_policy();
+      var { attachmentDestination } = require_desktop_policy();
+      var { handleLinkActivation: handleConversationActivation } = require_interactions();
+      function handleLinkActivation2(event, window2, openExternal = () => {
+      }, {
+        onInbox = () => {
+        },
+        onAttachment = () => {
+        },
+        onMedia = () => {
+        },
+        onLiveAttachment = () => {
+        }
+      } = {}) {
+        const element = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+        const anchor = element?.closest("a[href]");
+        const source = classifyNavigation(window2.location.href);
+        if (source === "messaging") {
+          if (element?.closest("[data-messenger-hidden]")) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+          }
+          handleConversationActivation(event, window2, (url) => {
+            const reel = attachmentDestination(url);
+            if (reel && /^\/direct\/t\/[^/]+\/?$/.test(window2.location.pathname) && /^\/(reel|tv)\//.test(new URL(reel).pathname)) onAttachment(reel);
+            else openExternal(url);
+          }, void 0, (action) => {
+            if (action.type === "messages") onInbox();
+            else if (action.type === "attachment") onAttachment(action.url);
+            else if (action.type === "story") openExternal(action.url);
+          }, onMedia, (card) => {
+            const permalink = [...card.querySelectorAll("a[href]")].map((link) => attachmentDestination(link.href)).find(Boolean);
+            if (permalink) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              onAttachment(permalink);
+            } else {
+              onLiveAttachment(card);
+            }
+          });
+          return;
+        }
         if (!anchor) return;
         const route = classifyNavigation(anchor.href);
         if (route === "messaging" || route === "auth") return;
-        const source = classifyNavigation(window2.location.href);
-        const fromAuth = source === "auth" && route === "external" && event.isTrusted;
-        if (!fromAuth) event.preventDefault();
+        if (!(source === "auth" && route === "external" && event.isTrusted)) event.preventDefault();
         event.stopImmediatePropagation();
-        if (source === "messaging" && route === "external" && event.isTrusted && !anchor.closest("[data-messenger-hidden]")) {
-          openExternal(anchor.href);
-        }
       }
       module.exports = { handleLinkActivation: handleLinkActivation2 };
     }
   });
 
   // ios/links-entry.js
-  var { handleLinkActivation } = require_interactions();
+  var { handleLinkActivation } = require_interactions2();
+  var { installAttachmentViewer } = require_attachment_viewer();
+  var { installLiveAttachment } = require_live_attachment();
   var handler = window.webkit?.messageHandlers?.messengerExternal;
+  var stopViewer;
+  function closeViewer(close = true) {
+    const stop = stopViewer;
+    stopViewer = null;
+    stop?.({ close });
+  }
+  window.addEventListener("messenger:route-changed", () => closeViewer(false));
+  window.addEventListener("popstate", () => closeViewer(false));
+  window.addEventListener("messenger:attachment-handoff", () => closeViewer(false));
   window.addEventListener("click", (event) => {
-    handleLinkActivation(event, window, (url) => handler?.postMessage(url));
+    handleLinkActivation(event, window, (url) => handler?.postMessage(url), {
+      onInbox: () => handler?.postMessage({ type: "inbox" }),
+      onAttachment: (url) => handler?.postMessage({ type: "attachment", url }),
+      onMedia: (media) => {
+        closeViewer();
+        stopViewer = installAttachmentViewer(window, null, closeViewer, media);
+      },
+      onLiveAttachment: (opener) => {
+        closeViewer();
+        handler?.postMessage({ type: "live-attachment" });
+        stopViewer = installLiveAttachment(window, { opener, onBack: closeViewer });
+      }
+    });
   }, true);
 })();

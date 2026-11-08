@@ -13,17 +13,25 @@ function samePostLink(selected, rawUrl) {
 }
 
 function label(control) {
+  const icon = control.querySelector('svg[aria-label], img[alt]');
   return control.getAttribute('aria-label') || control.getAttribute('title')
-    || control.querySelector('svg[aria-label], img[alt]')?.getAttribute('aria-label') || '';
+    || icon?.getAttribute('aria-label') || icon?.getAttribute('alt') || '';
+}
+
+function reelThumbnail(card) {
+  return card?.querySelector('img[alt="Clip" i], img[alt="Reel" i]');
 }
 
 function sharedMessageCard(element) {
   if (!element || element.closest('a[href]')) return null;
   const card = element.closest('button, [role="button"]');
   if (!card || !card.querySelector('img')
-    || !card.closest('article, [role="article"], [role="row"], [role="log"], [role="listitem"]')
     || card.closest('nav, header, [role="navigation"], [role="banner"]')) return null;
-  return card.querySelector('a[href]') || card.querySelector('img[alt="Clip"], img[alt="Reel"]') ? card : null;
+  const reel = reelThumbnail(card);
+  const inMessage = card.closest('article, [role="article"], [role="row"], [role="log"], [role="listitem"]');
+  // The mobile thread can omit the desktop's message roles.
+  if (!inMessage && !(reel && card.closest('main, [role="main"]'))) return null;
+  return card.querySelector('a[href]') || reel ? card : null;
 }
 
 function mediaElements(root) {
@@ -55,13 +63,14 @@ function stageFor(media, boundary) {
 
 function installLiveAttachment(window, { selected = null, opener = null, onBack }) {
   const { document } = window;
-  const before = new Set(document.querySelectorAll('video, img, button, [role="button"]'));
+  const before = new Set(document.querySelectorAll('video, img, a[href], button, [role="button"]'));
   const previousFocus = document.activeElement;
   const attributes = new Map();
   const styles = new Map();
   const videos = new Map();
   const muted = new Map();
   let stage;
+  let selectedMedia;
   let carouselWidth;
   let closeControl;
   let delegated;
@@ -127,9 +136,15 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
       }
       return null;
     }
-    const reel = !!opener?.querySelector('img[alt="Clip"], img[alt="Reel"]');
-    for (const control of document.querySelectorAll('button, [role="button"]')) {
-      if (before.has(control) || !/^(close|fechar|cerrar)$/i.test(label(control))) continue;
+    const reel = !!reelThumbnail(opener);
+    for (const control of document.querySelectorAll('a[href], button, [role="button"]')) {
+      if (before.has(control)) continue;
+      const name = label(control);
+      const isClose = /^(close|fechar|cerrar)$/i.test(name);
+      const isDialogBack = control.closest('dialog, [role="dialog"], [aria-modal="true"]')
+        && /^(back|go back|voltar|atrás)$/i.test(name);
+      if (!isClose && !isDialogBack) continue;
+      if (control.parentElement && !control.parentElement.contains(opener)) closeControl ??= control;
       for (let parent = control.parentElement; parent && !parent.matches('body, html') && !parent.contains(opener); parent = parent.parentElement) {
         const media = mediaElements(parent).filter(item => !before.has(item) && (!reel || item.tagName === 'VIDEO'));
         if (media.length) { closeControl = control; return { media: media[0], boundary: parent }; }
@@ -138,9 +153,15 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
     return null;
   }
 
+  function stageMedia() {
+    return selectedMedia?.tagName === 'VIDEO' && !carouselWidth
+      ? (stage.contains(selectedMedia) ? [selectedMedia] : [])
+      : mediaElements(stage);
+  }
+
   function resize() {
     if (!stage) return;
-    const available = mediaElements(stage);
+    const available = stageMedia();
     const frame = stage.getBoundingClientRect();
     const overlap = media => {
       const rect = media.getBoundingClientRect();
@@ -170,7 +191,8 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
     if (!stage) {
       const selection = findSelection();
       if (!selection) return;
-      stage = stageFor(selection.media, selection.boundary);
+      selectedMedia = selection.media;
+      stage = stageFor(selectedMedia, selection.boundary);
       if (carouselControls(stage).length) carouselWidth = stage.getBoundingClientRect().width
         || selection.media.getBoundingClientRect().width || selection.media.width || selection.media.naturalWidth || 640;
       remember(stage, 'data-messenger-live-stage', '');
@@ -185,7 +207,12 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
       root.querySelector('p').hidden = true;
       resize();
     }
-    const elements = mediaElements(stage);
+    const elements = stageMedia();
+    if (selectedMedia?.tagName === 'VIDEO' && !carouselWidth) {
+      for (const video of stage.querySelectorAll('video')) {
+        if (video !== selectedMedia && !video.paused) silence({ target: video });
+      }
+    }
     const hasPlayer = elements.some(media => media.tagName === 'VIDEO');
     for (const media of elements) {
       // A Reel's poster belongs to the native player. Forcing it visible would
@@ -209,19 +236,31 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
   }
   function stopPropagation(event) { event.stopPropagation(); }
   function silence(event) {
-    if (stage?.contains(event.target)) return;
+    if (stage && stageMedia().includes(event.target)) return;
     if (!muted.has(event.target)) muted.set(event.target, event.target.muted);
     event.target.muted = true;
     if (!event.target.paused) event.target.pause();
   }
-  function activate(control) { delegated = control; try { control?.click(); } finally { delegated = null; } }
+  function activate(control) {
+    delegated = control;
+    const href = control?.getAttribute('href');
+    // Mobile modals can put a homepage href on their Back control.
+    // Run its site handler without following that link.
+    if (href !== null && href !== undefined) control.removeAttribute('href');
+    try { control?.click(); } finally {
+      if (href !== null && href !== undefined) control.setAttribute('href', href);
+      delegated = null;
+    }
+  }
   function guard(event) {
     if (delegated && event.composedPath().includes(delegated)) return;
     if (event.type === 'keydown' && event.key === 'Escape' && event.isTrusted) { event.preventDefault(); event.stopImmediatePropagation(); onBack(); return; }
     const target = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
     const allowed = target?.closest('[data-messenger-live-allow]');
+    const inStage = allowed && stage?.contains(allowed);
+    if (event.type === 'touchmove' && inStage && allowed.tagName === 'VIDEO') return;
     if (event.type !== 'contextmenu' && event.type !== 'wheel' && event.type !== 'touchmove'
-      && (event.composedPath().includes(host) || (allowed && stage?.contains(allowed)))) return;
+      && (event.composedPath().includes(host) || inStage)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
@@ -243,6 +282,7 @@ function installLiveAttachment(window, { selected = null, opener = null, onBack 
   return function stop({ close = false } = {}) {
     if (stopped) return;
     stopped = true;
+    if (close && opener && !closeControl?.isConnected) findSelection();
     window.clearTimeout(timeout);
     observer.disconnect();
     for (const type of events) window.removeEventListener(type, guard, true);

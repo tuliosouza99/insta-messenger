@@ -61,16 +61,17 @@ function start(window) {
         let destination;
         try { destination = new URL(url, window.location.href); } catch { return; }
         if (!['messaging', 'auth'].includes(classifyNavigation(destination.href))) {
-          // A successful SPA login can try to show Home. Request Direct before
-          // the page changes routes, just as the native redirect guard does.
-          if (classifyNavigation(window.location.href) === 'auth'
-              && destination.origin === window.location.origin && destination.pathname === '/') {
+          // The site's router can render Home even if pushState is blocked.
+          // Replace the document with Direct for both Back and post-login Home.
+          if (destination.origin === window.location.origin && destination.pathname === '/') {
             window.location.replace(INBOX_URL);
           }
           return;
         }
       }
+      const previous = window.location.pathname;
       const result = original.apply(this, arguments);
+      if (window.location.pathname !== previous) window.dispatchEvent(new window.Event('messenger:route-changed'));
       refresh();
       return result;
     };

@@ -6,6 +6,11 @@ import WebKit
 
 @MainActor
 final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+    struct Attachment: Identifiable {
+        let url: URL
+        var id: URL { url }
+    }
+
     private enum Failure: String {
         case offline = "You appear to be offline. Reconnect and tap Try Again."
         case network = "Instagram could not load. Check your connection and try again."
@@ -17,6 +22,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         case terminated = "The Instagram page stopped. Try again to reopen it."
     }
 
+    @Published var attachment: Attachment?
     @Published private(set) var webView: WKWebView
     @Published private(set) var isLoading = false
     @Published private(set) var isResetting = false
@@ -36,6 +42,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
     private var activeNavigation: WKNavigation?
     private var retryURL = NavigationPolicy.inbox
     private var inboxRedirects = 0
+    private var liveAttachmentIntent: (thread: String, expires: ContinuousClock.Instant)?
 
     override init() {
         webView = Self.makeWebView()
@@ -68,7 +75,6 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         installScript("focus", in: .page, on: configuration.userContentController)
         installScript("links", in: linkWorld, on: configuration.userContentController)
         let view = WKWebView(frame: .zero, configuration: configuration)
-        view.allowsBackForwardNavigationGestures = true
         view.allowsLinkPreview = false
         view.scrollView.keyboardDismissMode = .interactive
         view.scrollView.contentInsetAdjustmentBehavior = .never
@@ -87,7 +93,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
 
     private func attachWebView() {
         webView.configuration.userContentController.add(
-            ExternalLinkHandler(session: self), contentWorld: Self.linkWorld, name: Self.linkHandlerName
+            InteractionHandler(session: self), contentWorld: Self.linkWorld, name: Self.linkHandlerName
         )
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -129,6 +135,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
     }
 
     private func load(_ url: URL) {
+        liveAttachmentIntent = nil
         failure = nil
         canStayOnPage = false
         reconnectRetryAvailable = false
@@ -215,11 +222,31 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
             && NavigationPolicy.isInstagramHost(origin.host) && (origin.port == 0 || origin.port == 443)
     }
 
-    private func openExternalLink(_ message: WKScriptMessage) {
+    private func handleInteraction(_ message: WKScriptMessage) {
         guard message.webView === webView, !isResetting, isTrustedMainFrame(message.frameInfo),
-              let source = webView.url, let raw = message.body as? String,
-              let destination = NavigationPolicy.externalLink(raw, from: source) else { return }
-        UIApplication.shared.open(destination)
+              let source = webView.url, NavigationPolicy.classify(source.absoluteString) == .messaging else { return }
+
+        if let raw = message.body as? String, let destination = NavigationPolicy.externalLink(raw, from: source) {
+            UIApplication.shared.open(destination)
+            return
+        }
+        guard let action = message.body as? [String: String] else { return }
+        switch action["type"] {
+        case "inbox":
+            openInbox()
+        case "live-attachment":
+            if NavigationPolicy.isThread(source) {
+                liveAttachmentIntent = (source.path, ContinuousClock.now.advanced(by: .seconds(4)))
+            }
+        case "attachment":
+            liveAttachmentIntent = nil
+            if NavigationPolicy.isThread(source), let raw = action["url"],
+               let url = NavigationPolicy.attachmentDestination(raw) {
+                attachment = Attachment(url: url)
+            }
+        default:
+            break
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
@@ -240,7 +267,18 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         let trustedSource = isTrustedMainFrame(action.sourceFrame)
         let sourceURL = webView.url ?? action.sourceFrame.request.url
         let isLink = action.navigationType == .linkActivated
-        switch NavigationPolicy.decision(for: url, activatedLink: isLink) {
+        if action.navigationType == .other, trustedSource, action.targetFrame?.isMainFrame == true,
+           let intent = liveAttachmentIntent, let sourceURL, sourceURL.path == intent.thread,
+           ContinuousClock.now < intent.expires, let destination = NavigationPolicy.attachmentDestination(url.absoluteString) {
+            // Some mobile cards navigate to the permalink instead of opening a
+            // dialog. Transfer only this recent, trusted card tap to the sheet.
+            liveAttachmentIntent = nil
+            decisionHandler(.cancel)
+            webView.evaluateJavaScript("window.dispatchEvent(new Event('messenger:attachment-handoff'))")
+            attachment = Attachment(url: destination)
+            return
+        }
+        switch NavigationPolicy.decision(for: url, activatedLink: isLink, from: sourceURL) {
         case .allow:
             if action.targetFrame != nil {
                 decisionHandler(.allow)
@@ -273,7 +311,10 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
             guard let url = response.response.url else { decisionHandler(.cancel); return }
             guard NavigationPolicy.classify(url.absoluteString).isEmbedded else {
                 decisionHandler(.cancel)
-                handleDisallowedURL(url)
+                if !hasCommittedPage || NavigationPolicy.classify(retryURL.absoluteString) != .messaging
+                    || NavigationPolicy.isInstagramHome(url) {
+                    handleDisallowedURL(url)
+                }
                 return
             }
             retryURL = url
@@ -373,13 +414,13 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         decisionHandler(.deny)
     }
 
-    private final class ExternalLinkHandler: NSObject, WKScriptMessageHandler {
+    private final class InteractionHandler: NSObject, WKScriptMessageHandler {
         weak var session: WebSession?
 
         init(session: WebSession) { self.session = session }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            session?.openExternalLink(message)
+            session?.handleInteraction(message)
         }
     }
 }

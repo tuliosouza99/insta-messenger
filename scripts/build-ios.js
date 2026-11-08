@@ -9,6 +9,8 @@ async function main() {
     entryPoints: {
       focus: path.resolve(__dirname, '../ios/focus-entry.js'),
       links: path.resolve(__dirname, '../ios/links-entry.js'),
+      activity: path.resolve(__dirname, '../ios/activity-entry.js'),
+      attachment: path.resolve(__dirname, '../ios/attachment-entry.js'),
     },
     outdir,
     bundle: true,

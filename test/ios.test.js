@@ -54,7 +54,7 @@ test('SPA guards stop feed and Explore routes but preserve thread and authentica
   assert.equal(location.pathname, '/direct/t/123/');
   history.pushState({}, '', '/explore/');
   assert.equal(location.pathname, '/direct/t/123/');
-  history.replaceState({}, '', '/');
+  history.replaceState({}, '', '/reels/');
   assert.equal(location.pathname, '/direct/t/123/');
   history.pushState({}, '', '/accounts/login/');
   assert.equal(location.pathname, '/accounts/login/');
@@ -151,4 +151,64 @@ test('mobile focus preserves a composer with a bare contenteditable attribute', 
   } finally {
     dom.window.close();
   }
+});
+
+function activateConversationControl(t, html, selector, isTrusted = true) {
+  const { handleLinkActivation } = require('../ios/interactions');
+  const dom = new JSDOM(html, { url: 'https://www.instagram.com/direct/t/123/' });
+  t.after(() => dom.window.close());
+  const actions = [];
+  const event = {
+    type: 'click',
+    target: dom.window.document.querySelector(selector),
+    isTrusted,
+    blocked: false,
+    preventDefault() { this.blocked = true; },
+    stopImmediatePropagation() {},
+  };
+  handleLinkActivation(event, dom.window, url => actions.push(['external', url]), {
+    onInbox: () => actions.push(['inbox']),
+    onAttachment: url => actions.push(['attachment', url]),
+    onLiveAttachment: card => actions.push(['live', card.id]),
+  });
+  return { actions, blocked: event.blocked };
+}
+
+test('the iPhone conversation Back control stays in Messages', t => {
+  const html = '<header><a href="/" aria-label="Voltar"><svg></svg></a><button aria-label="Go back">Arrow</button></header>';
+  assert.deepEqual(activateConversationControl(t, html, 'svg'), { actions: [['inbox']], blocked: true });
+  assert.deepEqual(activateConversationControl(t, html, 'button'), { actions: [['inbox']], blocked: true });
+  assert.deepEqual(activateConversationControl(t, html, 'button', false), { actions: [], blocked: true });
+});
+
+test('a shared Reel link opens the focused viewer without a system handoff', t => {
+  const html = '<main><div><a href="https://www.instagram.com/reel/Shared_1/?igsh=tracking">Reel</a></div></main>';
+  assert.deepEqual(activateConversationControl(t, html, 'a'), {
+    actions: [['attachment', 'https://www.instagram.com/reel/Shared_1/']], blocked: true,
+  });
+});
+
+test('a Reel button retains the original tap so the focused viewer can keep the live player', t => {
+  const html = '<main><div><button id="reel"><img alt="Clip"></button></div></main>';
+  assert.deepEqual(activateConversationControl(t, html, 'img'), { actions: [['live', 'reel']], blocked: false });
+  assert.deepEqual(activateConversationControl(t, html, 'img', false), { actions: [], blocked: true });
+});
+
+test('the bundled iPhone Reel viewer keeps the selected video and hides recommendations', async t => {
+  const dom = new JSDOM(`
+    <head><link rel="canonical" href="https://www.instagram.com/reel/SHARED/"></head>
+    <body><main>
+      <article><a href="/reel/SHARED/">Shared Reel</a><div id="player"><video></video></div></article>
+      <section id="related"><a href="/reel/OTHER/">Another Reel</a><video></video></section>
+    </main></body>
+  `, { url: 'https://www.instagram.com/reel/SHARED/', runScripts: 'outside-only' });
+  t.after(() => dom.window.close());
+  const script = path.join(path.dirname(resource), 'attachment.js');
+  vm.runInContext(fs.readFileSync(script, 'utf8'), dom.getInternalVMContext());
+  await new Promise(resolve => setImmediate(resolve));
+  const { document } = dom.window;
+  assert.equal(document.querySelector('[data-messenger-live-stage]')?.id, 'player');
+  assert.equal(document.querySelector('#player video').controls, true);
+  assert.equal(document.querySelector('#related video').hasAttribute('data-messenger-live-allow'), false);
+  assert.equal(dom.window.getComputedStyle(document.querySelector('#related')).visibility, 'hidden');
 });

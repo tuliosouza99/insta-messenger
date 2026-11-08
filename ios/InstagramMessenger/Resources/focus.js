@@ -198,13 +198,15 @@
             return;
           }
           if (!["messaging", "auth"].includes(classifyNavigation(destination.href))) {
-            if (classifyNavigation(window2.location.href) === "auth" && destination.origin === window2.location.origin && destination.pathname === "/") {
+            if (destination.origin === window2.location.origin && destination.pathname === "/") {
               window2.location.replace(INBOX_URL);
             }
             return;
           }
         }
+        const previous = window2.location.pathname;
         const result = original.apply(this, arguments);
+        if (window2.location.pathname !== previous) window2.dispatchEvent(new window2.Event("messenger:route-changed"));
         refresh();
         return result;
       };

@@ -17,7 +17,7 @@ With a free Personal Team, Apple development profiles expire after seven days. R
 
 The tray button returns to Direct. The menu reloads the current page or clears this app's Instagram website data after confirmation. An offline failure offers **Try Again** and can retry when the connection returns.
 
-Instagram provides the conversation list, composer, inline media and attachment picker. Availability depends on its mobile website. Tapping a shared post, Reel, story, profile or other public link in a conversation hands it off to iOS. The system may use your browser or an installed app. Background message alerts and the desktop attachment and activity viewers are deferred.
+Instagram provides the conversation list, composer, inline media and attachment picker. Availability depends on its mobile website. Recognized shared posts and Reels in a conversation open in a focused attachment viewer. **Back to Message** returns to the thread. Profile, story and other public links may open in your browser or an installed app. The bell next to the menu opens Instagram’s **Notifications** in a separate view. **Back to Messages** returns to your conversation. Background message alerts are deferred.
 
 ## Build and verify
 

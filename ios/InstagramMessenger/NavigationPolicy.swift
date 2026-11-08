@@ -40,6 +40,17 @@ enum NavigationPolicy {
         return .external
     }
 
+    // These pages are only allowed in the separate activity viewer.
+    static let activityPages = ["/accounts/activity/", "/notifications/", "/"].map {
+        URL(string: "https://www.instagram.com" + $0)!
+    }
+
+    static func isActivityPage(_ url: URL) -> Bool {
+        guard let safe = publicURL(url.absoluteString), isInstagramHost(safe.host),
+              let path = URLComponents(url: safe, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return false }
+        return ["", "/", "/accounts/activity", "/accounts/activity/", "/notifications", "/notifications/"].contains(path)
+    }
+
     static func isInstagramHost(_ host: String?) -> Bool {
         ["www.instagram.com", "instagram.com"].contains(host?.lowercased() ?? "")
     }
@@ -56,14 +67,55 @@ enum NavigationPolicy {
         return url
     }
 
-    static func externalLink(_ raw: String, from source: URL) -> URL? {
-        guard classify(source.absoluteString) == .messaging, classify(raw) == .external else { return nil }
-        return externalDestination(raw)
+    static func isInstagramHome(_ url: URL) -> Bool {
+        guard let safe = publicURL(url.absoluteString), isInstagramHost(safe.host),
+              let path = URLComponents(url: safe, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return false }
+        return path.isEmpty || path == "/"
     }
 
-    static func decision(for url: URL, activatedLink: Bool) -> Decision {
+    static func isThread(_ url: URL) -> Bool {
+        guard classify(url.absoluteString) == .messaging,
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return false }
+        return path.range(of: #"^/direct/t/[^/]+/?$"#, options: .regularExpression) != nil
+    }
+
+    static func attachmentDestination(_ raw: String) -> URL? {
+        guard let safe = publicURL(raw), isInstagramHost(safe.host),
+              let parts = URLComponents(url: safe, resolvingAgainstBaseURL: false),
+              parts.percentEncodedPath.range(
+                of: #"^/(?:[a-z0-9._]{1,30}/)?(p|reel|tv)/[a-z0-9_-]{1,128}/?$"#,
+                options: [.regularExpression, .caseInsensitive]
+              ) != nil else { return nil }
+        let segments = parts.percentEncodedPath.split(separator: "/").suffix(2)
+        var target = URLComponents()
+        target.scheme = "https"
+        target.host = "www.instagram.com"
+        target.path = "/" + segments.joined(separator: "/") + "/"
+        if let index = parts.queryItems?.first(where: { $0.name == "img_index" })?.value,
+           index.range(of: #"^[1-9][0-9]{0,2}$"#, options: .regularExpression) != nil {
+            target.queryItems = [URLQueryItem(name: "img_index", value: index)]
+        }
+        return target.url
+    }
+
+    static func sameAttachment(_ url: URL, as selected: URL) -> Bool {
+        guard let candidate = attachmentDestination(url.absoluteString),
+              let selection = attachmentDestination(selected.absoluteString) else { return false }
+        return candidate.lastPathComponent == selection.lastPathComponent
+    }
+
+    static func externalLink(_ raw: String, from source: URL) -> URL? {
+        guard classify(source.absoluteString) == .messaging, classify(raw) == .external,
+              let destination = externalDestination(raw), !isInstagramHome(destination) else { return nil }
+        return destination
+    }
+
+    static func decision(for url: URL, activatedLink: Bool, from source: URL? = nil) -> Decision {
         let route = classify(url.absoluteString)
         if route.isEmbedded { return .allow }
+        if let source, classify(source.absoluteString) == .messaging {
+            return isInstagramHome(url) ? .inbox : .cancel
+        }
         // Instagram can redirect to the homepage after successful sign-in.
         if !activatedLink, isInstagramHost(url.host), route == .external { return .inbox }
         return .cancel

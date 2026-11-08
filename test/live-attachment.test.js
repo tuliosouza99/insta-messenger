@@ -75,3 +75,53 @@ test('a late-loaded portrait and subsequent slide changes recompute the media fr
   assert.equal(Number.parseFloat(stage.style.width) / Number.parseFloat(stage.style.height), 1920 / 1080);
   stop(); dom.window.close();
 });
+
+test('a mobile Reel dialog with a Back control exposes only the original player', async t => {
+  const dom = new JSDOM('<main><button id="opener"><img alt="Reel"></button></main>', {
+    url: 'https://www.instagram.com/direct/t/123/',
+  });
+  const { document } = dom.window;
+  const stop = installLiveAttachment(dom.window, { opener: document.querySelector('#opener'), onBack() {} });
+  t.after(() => { stop(); dom.window.close(); });
+  document.body.insertAdjacentHTML('beforeend', `
+    <section role="dialog">
+      <a href="/" aria-label="Voltar">Back</a>
+      <div id="player"><video></video></div>
+      <div id="related"><video></video></div>
+    </section>
+  `);
+  await tick();
+  assert.equal(document.querySelector('[data-messenger-live-stage]')?.id, 'player');
+  assert.equal(document.querySelector('#player video').controls, true);
+  assert.equal(document.querySelector('#related video').hasAttribute('data-messenger-live-allow'), false);
+});
+
+test('closing a Reel while its video is loading also dismisses the site modal', t => {
+  const dom = new JSDOM('<main><button id="opener"><img alt="Reel"></button><textarea>draft</textarea></main>', {
+    url: 'https://www.instagram.com/direct/t/123/',
+  });
+  t.after(() => dom.window.close());
+  const { document } = dom.window;
+  const stop = installLiveAttachment(dom.window, { opener: document.querySelector('#opener'), onBack() {} });
+  document.body.insertAdjacentHTML('beforeend', '<section id="modal" role="dialog"><a href="/" aria-label="Voltar">Back</a><p>Loading</p></section>');
+  const modal = document.querySelector('#modal');
+  const back = modal.querySelector('a');
+  back.addEventListener('click', () => modal.remove());
+  stop({ close: true });
+  assert.equal(document.querySelector('#modal'), null);
+  assert.equal(document.querySelector('textarea').value, 'draft');
+  assert.equal(document.location.pathname, '/direct/t/123/');
+});
+
+test('a neighbouring video in the same player wrapper stays hidden', t => {
+  const url = 'https://www.instagram.com/reel/SELECTED/';
+  const dom = new JSDOM(`
+    <main><article><a href="/reel/SELECTED/">Selected</a>
+      <div id="player"><video id="chosen"></video><video id="related"></video></div>
+    </article></main>`, { url });
+  const stop = installLiveAttachment(dom.window, { selected: url, onBack() {} });
+  t.after(() => { stop(); dom.window.close(); });
+  const { document } = dom.window;
+  assert.equal(document.querySelector('#chosen').hasAttribute('data-messenger-live-allow'), true);
+  assert.equal(document.querySelector('#related').hasAttribute('data-messenger-live-allow'), false);
+});

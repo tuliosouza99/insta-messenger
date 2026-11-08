@@ -37,6 +37,25 @@ struct NavigationPolicyTests {
         check(NavigationPolicy.isCancellation(NSError(domain: "WebKitErrorDomain", code: 102)), "WebKit policy interruption is cancellation")
         check(NavigationPolicy.isCancellation(NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)), "URL cancellation")
         check(!NavigationPolicy.isCancellation(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)), "offline failure is not cancellation")
+        for raw in ["https://www.instagram.com/", "https://instagram.com/accounts/activity/", "https://www.instagram.com/notifications?ref=home"] {
+            check(NavigationPolicy.isActivityPage(URL(string: raw)!), "activity viewer can load \(raw)")
+            check(!NavigationPolicy.classify(raw).isEmbedded, "messages keeps activity shell out of the inbox web view")
+        }
+        for raw in ["http://www.instagram.com/", "https://www.instagram.com/explore/", "https://www.instagram.com/notifications/settings/", "https://www.instagram.com/accounts/activity%2f", "https://www.instagram.com/direct/inbox/", "https://user@www.instagram.com/", "https://example.com/notifications/"] {
+            check(!NavigationPolicy.isActivityPage(URL(string: raw)!), "activity viewer rejects \(raw)")
+        }
+        let thread = URL(string: "https://www.instagram.com/direct/t/123/")!
+        check(NavigationPolicy.decision(for: home, activatedLink: true, from: thread) == .inbox, "a Home href in a conversation returns to the inbox")
+        check(NavigationPolicy.externalLink(home.absoluteString, from: thread) == nil, "Home cannot be handed off to iOS")
+        check(NavigationPolicy.decision(for: URL(string: "https://www.instagram.com/reel/SHARED/")!,
+                                        activatedLink: false, from: thread) == .cancel,
+              "unhandled Reel navigation preserves the conversation instead of loading the inbox")
+        let selected = URL(string: "https://www.instagram.com/reel/SHARED/")!
+        check(NavigationPolicy.attachmentDestination("https://instagram.com/person/reel/SHARED/?igsh=tracking") == selected, "Reel link is canonicalized")
+        check(NavigationPolicy.sameAttachment(URL(string: "https://www.instagram.com/p/SHARED/")!, as: selected), "same Reel identity survives a canonical redirect")
+        for raw in ["https://www.instagram.com/reel/NEXT/", "https://www.instagram.com/reels/", "https://www.instagram.com/reel/SHARED/liked_by/", "https://example.com/reel/SHARED/"] {
+            check(!NavigationPolicy.sameAttachment(URL(string: raw)!, as: selected), "viewer rejects \(raw)")
+        }
         if failures > 0 { exit(1) }
         print("Swift navigation policy: all checks passed")
     }

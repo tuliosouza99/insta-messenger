@@ -4,6 +4,7 @@ import WebKit
 struct MessengerView: View {
     @StateObject private var session = WebSession()
     @State private var confirmReset = false
+    @State private var showActivity = false
 
     var body: some View {
         NavigationStack {
@@ -37,7 +38,10 @@ struct MessengerView: View {
                         .accessibilityLabel("Open inbox")
                         .disabled(session.isResetting)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("Notifications", systemImage: "bell") { showActivity = true }
+                        .labelStyle(.iconOnly)
+                        .disabled(session.isResetting)
                     Menu {
                         Button("Reload", systemImage: "arrow.clockwise", action: session.retry)
                         Button("Reset Local Session…", systemImage: "person.crop.circle.badge.xmark", role: .destructive) { confirmReset = true }
@@ -47,6 +51,12 @@ struct MessengerView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if session.isLoading { ProgressView().progressViewStyle(.linear).accessibilityLabel("Loading messages") }
+            }
+            .sheet(item: $session.attachment) { attachment in
+                AttachmentView(url: attachment.url, dataStore: session.webView.configuration.websiteDataStore)
+            }
+            .sheet(isPresented: $showActivity) {
+                ActivityView(dataStore: session.webView.configuration.websiteDataStore)
             }
             .confirmationDialog("Reset this iPhone’s Instagram session?", isPresented: $confirmReset, titleVisibility: .visible) {
                 Button("Reset Local Session", role: .destructive, action: session.resetSession)
@@ -60,7 +70,7 @@ struct MessengerView: View {
     }
 }
 
-private struct WebContent: UIViewRepresentable {
+struct WebContent: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
