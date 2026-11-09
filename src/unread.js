@@ -3,7 +3,8 @@ const { classifyNavigation } = require('./policy');
 function readUnreadCount(document) {
   const titleMatch = /^\((\d{1,6})\)\s/.exec(document.title);
   const markers = document.querySelectorAll('[aria-label="Unread"], [aria-label="Unread message"], [aria-label="Unread messages"], [aria-label="Não lida"], [aria-label="Não lidas"], [aria-label="No leído"]');
-  const rows = new Set(Array.from(markers, marker => marker.closest('a[href*="/direct/t/"], [role="row"], [role="listitem"], [role="button"]') || marker));
+  const messageMarkers = Array.from(markers).filter(marker => !marker.closest('nav, [role="navigation"], [data-messenger-navigation], [data-messenger-hidden]'));
+  const rows = new Set(messageMarkers.map(marker => marker.closest('a[href*="/direct/t/"], [role="row"], [role="listitem"], [role="button"]') || marker));
   return Math.max(titleMatch ? Number(titleMatch[1]) : 0, rows.size);
 }
 

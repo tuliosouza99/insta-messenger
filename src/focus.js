@@ -1,4 +1,5 @@
 const { classifyNavigation } = require('./policy');
+const { activityPanel } = require('./activity-controls');
 
 function instagramPath(anchor) {
   try {
@@ -8,9 +9,12 @@ function instagramPath(anchor) {
   return '';
 }
 
-function hasMessagingContent(element) {
+function hasMessagingContent(element, panel) {
+  const isPageFragment = content => content.tagName === 'A' && content.getAttribute('href').includes('#')
+    && content.href.split('#')[0] === element.ownerDocument.location.href.split('#')[0];
   return element.matches('body, html, main, [role="main"]')
-    || element.querySelector('main, [role="main"], textarea, [contenteditable="true"], input[type="file"], a[href*="/direct/t/"]');
+    || Array.from(element.querySelectorAll('main, [role="main"], textarea, [contenteditable="true"], input[type="file"], a[href*="/direct/t/"]'))
+      .some(content => !panel?.contains(content) && !isPageFragment(content));
 }
 
 function isNavigationRegion(element, document) {
@@ -25,7 +29,7 @@ function isNavigationRegion(element, document) {
   const left = rect.width ? rect.left : Number.parseFloat(style.left);
   const tall = rect.height >= document.defaultView.innerHeight * 0.6
     || style.height === '100vh' || (style.top === '0px' && style.bottom === '0px');
-  return left === 0 && width > 0 && width <= 300 && tall;
+  return left === 0 && width > 0 && (width <= 300 || element.hasAttribute('data-messenger-navigation')) && tall;
 }
 
 function applyFocus(document) {
@@ -48,17 +52,26 @@ function applyFocus(document) {
   const homes = links.filter(anchor => instagramPath(anchor) === '/' && !anchor.closest('main, [role="main"]'));
   for (const home of homes) {
     let candidate = home.parentElement;
-    while (candidate && !hasMessagingContent(candidate)) {
+    while (candidate) {
+      const panel = activityPanel(candidate);
+      if (hasMessagingContent(candidate, panel)) break;
       const paths = Array.from(candidate.querySelectorAll('a[href]'), instagramPath);
       if (isNavigationRegion(candidate, document)
         && paths.some(path => /^\/(explore|reels)(?:\/|$)/.test(path))
         && paths.some(path => /^\/direct(?:\/|$)/.test(path))) {
-        hidden.add(candidate);
-        if (!candidate.hasAttribute('data-messenger-hidden')) candidate.setAttribute('data-messenger-hidden', '');
+        candidate.setAttribute('data-messenger-navigation', '');
+        if (panel) {
+          for (let branch = panel; branch !== candidate; branch = branch.parentElement) {
+            for (const sibling of branch.parentElement.children) if (sibling !== branch) hidden.add(sibling);
+          }
+        } else hidden.add(candidate);
         break;
       }
       candidate = candidate.parentElement;
     }
+  }
+  for (const element of hidden) {
+    if (!element.hasAttribute('data-messenger-hidden')) element.setAttribute('data-messenger-hidden', '');
   }
   for (const element of previouslyHidden) {
     if (!hidden.has(element)) element.removeAttribute('data-messenger-hidden');

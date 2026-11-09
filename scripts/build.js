@@ -1,7 +1,7 @@
 const { build } = require('esbuild');
 
 build({
-  entryPoints: ['src/preload.js', 'src/attachment-preload.js'],
+  entryPoints: ['src/preload.js', 'src/attachment-preload.js', 'src/activity-preload.js'],
   bundle: true,
   platform: 'browser',
   format: 'cjs',

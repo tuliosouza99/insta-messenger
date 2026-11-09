@@ -54,6 +54,49 @@ test('real renderer is isolated and the actual preload preserves messages', asyn
     dedicated: true, persistent: true });
 });
 
+test('the in-app bell opens native follow activity without leaving the chat or sending desktop alerts', async () => {
+  await page.locator('textarea').fill('Unsent follow activity draft');
+  const noticesBefore = await application.evaluate(() => globalThis.__nativeNotices.length);
+  await page.evaluate(() => {
+    const rail = document.querySelector('#rail');
+    const control = document.createElement('a');
+    control.id = 'native-notifications';
+    control.href = '#';
+    control.innerHTML = '<svg aria-label="Notifications"></svg>';
+    control.addEventListener('click', event => {
+      event.preventDefault();
+      const panel = document.querySelector('#native-activity-panel');
+      if (panel) { panel.remove(); return; }
+      rail.insertAdjacentHTML('beforeend', '<section id="native-activity-panel"><h2>Notifications</h2><p>new.friend started following you.</p><p>another.friend accepted your follow request.</p><span aria-label="Unread"></span><button id="close-activity">Close</button></section>');
+      document.querySelector('#close-activity').addEventListener('click', () => document.querySelector('#native-activity-panel').remove());
+    });
+    rail.append(control);
+  });
+  const bell = page.locator('#messenger-activity-controls').getByRole('button', { name: 'Notifications', exact: true });
+  await bell.waitFor();
+  await bell.evaluate(button => button.click());
+  assert.equal(await page.locator('#native-activity-panel').count(), 0);
+  await bell.click();
+  await page.getByText('new.friend started following you.', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await page.getByText('another.friend accepted your follow request.', { exact: true }).isVisible(), true);
+  assert.equal(await page.locator('#rail a[href="/explore/"]').isVisible(), false);
+  assert.equal(await page.locator('textarea').inputValue(), 'Unsent follow activity draft');
+  assert.equal(page.url(), inbox);
+  await page.locator('#close-activity').click();
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#rail')).display === 'none');
+  await bell.click();
+  await page.locator('#native-activity-panel').waitFor({ state: 'visible' });
+  await bell.click();
+  await page.locator('#native-activity-panel').waitFor({ state: 'detached' });
+  assert.equal(await application.evaluate(() => globalThis.__nativeNotices.length), noticesBefore);
+  await page.evaluate(() => history.pushState({}, '', '/accounts/login/'));
+  await bell.waitFor({ state: 'detached' });
+  await page.evaluate(() => history.pushState({}, '', '/direct/inbox/'));
+  await bell.waitFor({ state: 'visible' });
+  await page.evaluate(() => document.querySelector('#native-notifications').remove());
+  await bell.waitFor({ state: 'visible' });
+});
+
 test('trusted mouse, keyboard and middle clicks open shared links; synthetic clicks and popups do not', async () => {
   await page.locator('#shared').click();
   await page.locator('#public').focus();
@@ -460,6 +503,47 @@ test('notification controls and IPC checks reject disabled or forged activity', 
     Menu.getApplicationMenu().getMenuItemById('test-notification').click();
   });
   assert.equal(await application.evaluate(() => globalThis.__nativeNotices.length), 1);
+});
+
+test('the bell opens isolated native activity from a standalone inbox and preserves the draft', async () => {
+  await page.goto(inbox);
+  await page.locator('textarea').fill('Keep this inbox draft');
+  await page.locator('#messenger-activity-controls').getByRole('button', { name: 'Notifications', exact: true }).click();
+  await assertEventually(async () => assert.ok(application.context().pages().some(candidate => candidate !== page && candidate.url() === 'https://www.instagram.com/')));
+  let activity = application.context().pages().find(candidate => candidate !== page && candidate.url() === 'https://www.instagram.com/');
+  await activity.getByRole('button', { name: 'Back to messages', exact: true }).waitFor();
+  await activity.getByText('new.friend started following you.', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await activity.locator('#feed').isVisible(), false);
+  assert.equal(await activity.locator('#browse').isVisible(), false);
+  assert.equal(await activity.evaluate(() => [typeof window.require, typeof window.messenger].join(',')), 'undefined,undefined');
+  assert.equal(await page.locator('textarea').inputValue(), 'Keep this inbox draft');
+  const openedBefore = await application.evaluate(() => globalThis.__openedUrls.length);
+  await activity.locator('#activity-profile').click();
+  await assertEventually(async () => assert.equal(await application.evaluate(() => globalThis.__openedUrls.length), openedBefore + 1));
+  assert.equal(activity.url(), 'https://www.instagram.com/');
+  await activity.getByRole('button', { name: 'Back to messages', exact: true }).click();
+  await assertEventually(async () => assert.equal(activity.isClosed(), true));
+  assert.equal(await page.locator('textarea').inputValue(), 'Keep this inbox draft');
+  await page.locator('#messenger-activity-controls').getByRole('button', { name: 'Notifications', exact: true }).click();
+  await assertEventually(async () => assert.ok(application.context().pages().some(candidate => candidate !== page && candidate.url() === 'https://www.instagram.com/')));
+  activity = application.context().pages().find(candidate => candidate !== page && candidate.url() === 'https://www.instagram.com/');
+  await activity.getByRole('button', { name: 'Back to messages', exact: true }).waitFor();
+  await activity.evaluate(() => { location.href = 'https://www.instagram.com/explore/'; });
+  assert.equal(activity.url(), 'https://www.instagram.com/');
+  await activity.keyboard.press('Escape').catch(error => { if (!activity.isClosed()) throw error; });
+  await assertEventually(async () => assert.equal(activity.isClosed(), true));
+});
+
+test('offline activity retains a working Back control and preserves the inbox draft', async () => {
+  await application.evaluate(() => { globalThis.__fixtureMode = 'offline'; });
+  await page.locator('#messenger-activity-controls').getByRole('button', { name: 'Notifications', exact: true }).click();
+  await assertEventually(async () => assert.ok(application.context().pages().some(candidate => candidate.url() === 'app://ui/activity-error.html')));
+  const activity = application.context().pages().find(candidate => candidate.url() === 'app://ui/activity-error.html');
+  await activity.getByText('Instagram activity could not be loaded. Go back to messages and try again.', { exact: true }).waitFor();
+  await activity.getByRole('button', { name: 'Back to messages', exact: true }).click();
+  await assertEventually(async () => assert.equal(activity.isClosed(), true));
+  assert.equal(await page.locator('textarea').inputValue(), 'Keep this inbox draft');
+  await application.evaluate(() => { globalThis.__fixtureMode = 'normal'; });
 });
 
 test('recovery UI is visually usable at the minimum supported window size', async () => {

@@ -18,6 +18,7 @@ Before packaging a local Mac app:
 2. Run `npm run package` and verify the package's ad-hoc signature.
 3. Launch the package and sign in yourself to check the current Instagram UI.
 4. Check inbox/thread Back navigation, the story control, shared/external links, media and offline retry. Open a received photo, video, shared post and Reel; check playback, Back/Escape, preserved draft/scroll position and absence of onward browsing.
+   Open the top-right Notifications bell and check new-follower and accepted-request activity, including from a standalone inbox without a global navigation rail. Close and reopen the panel, confirm the current draft remains, and check that feed/Explore/Reels navigation stays hidden. Check Back/Escape and offline recovery in the focused activity view. This activity should not create desktop alerts.
 5. Use **Notifications → Send test notification** and verify macOS delivery.
 
 Website-dependent behavior can change independently of this source. The unread detector uses title counts and explicit accessible markers, so it does not guarantee an alert for every message. A message in an already-unread thread may not change those signals. Story playback and login can also depend on the account and available content.

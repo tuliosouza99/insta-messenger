@@ -2,6 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { readUnreadCount, UnreadTracker, watchUnread } = require('../src/unread');
+const { watchFocus } = require('../src/focus');
+
+test('unread follow activity is excluded from message counts in native navigation panels', async t => {
+  const dom = new JSDOM('<div id="rail" style="position:fixed;left:0;top:0;width:220px;height:100vh"><div><a href="/">Home</a><a href="/explore/">Explore</a><a href="/direct/inbox/">Messages</a></div></div><main><a href="/direct/t/1/"><span aria-label="Unread"></span>Chat</a></main>', { url: 'https://www.instagram.com/direct/inbox/' });
+  const stop = watchFocus(dom.window);
+  t.after(() => { stop(); dom.window.close(); });
+  dom.window.document.querySelector('#rail').insertAdjacentHTML('beforeend', '<section><h2>Notifications</h2><div role="listitem"><span aria-label="Unread"></span>friend started following you.</div></section>');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(readUnreadCount(dom.window.document), 1);
+});
 
 test('reads unread title counts without collecting message text', () => {
   const dom = new JSDOM('<title>(3) Instagram • Messages</title><main>Private message</main>');

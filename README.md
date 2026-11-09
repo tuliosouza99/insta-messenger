@@ -35,6 +35,7 @@ See [testing and local packaging checks](docs/testing.md). GitHub CI runs the Ja
 - Opens recognized message photos, videos, shared posts and Reels in a focused attachment viewer. Reels retain Instagram's streaming player, and carousel arrows move through photos in the selected post. **Back to message** (or Escape) returns to the conversation with your draft and place preserved; the viewer cannot browse other posts, profiles or recommendations.
 - Hides recognized feed/Explore/Reels navigation and redirects attempted browsing back to messages.
 - Keeps the conversation Back arrow inside the app.
+- Adds a **Notifications** bell in the top-right corner of messages. It opens Instagram's own activity panel, including new followers and accepted follow requests, while keeping your conversation and draft in place. Standalone inbox layouts open activity in a separate focused view; **Back to messages** or Escape returns to the inbox.
 - Adds **View story** to recognized conversation headers. Story links stay inside the app and return to the last conversation when closed. Instagram determines whether a story is available.
 - Opens profiles, other public HTTPS links and post/Reel links outside recognized conversation messages in the normal browser.
 - Shows generic native alerts for new unread activity without message or sender previews.
@@ -47,6 +48,7 @@ Useful controls:
 | --- | --- |
 | `⌘1` | Return to inbox |
 | `⌘R` | Reload |
+| Notifications bell in messages | Open or close Instagram's in-app activity panel |
 | Notifications → Message notifications | Enable or disable alerts; preference is saved |
 | Notifications → Send test notification | Check native macOS delivery |
 | Instagram Messenger → Reset Instagram session… | Clear this app's cookies/cache/site storage after confirmation |
@@ -58,6 +60,8 @@ Allow the app in **System Settings → Notifications** if macOS requests permiss
 Instagram can change its website markup and routing without notice. Unknown layouts are preserved rather than hidden broadly, so visual filtering may need updates. URL guards remain active.
 
 Alerts follow increases in Instagram's unread title counts or explicit accessible markers. Startup backlog is ignored, foreground activity is suppressed and short bursts are grouped. A message in an already-unread thread may not change the count. This is not an independent push service or a guarantee of an alert for every message.
+
+The in-app activity bell remains available in standalone inbox layouts without global navigation. The focused activity view recognizes Instagram's English, Portuguese and Spanish Notifications panels and keeps its home feed hidden. Activity contents and updates come from Instagram's website; follow activity does not create macOS notifications. Profiles opened from the activity panel use your normal browser.
 
 Calls, camera/microphone access, account switching, tray behavior, dock unread badges and automatic updates are not implemented. File upload pickers remain part of Instagram's interface; downloads ask before opening the browser.
 
